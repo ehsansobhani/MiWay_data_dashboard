@@ -57,9 +57,8 @@ def get_drive_service(sa_json_str: str):
     # for debug
     # st.write("SA JSON length:", len(sa_json_str))
     # st.write("SA JSON starts with:", sa_json_str[:30])
-    info = json.loads(sa_json_str)
-    creds = service_account.Credentials.from_service_account_info(
-        info,
+   creds = service_account.Credentials.from_service_account_info(
+        sa_info,
         scopes=["https://www.googleapis.com/auth/drive.readonly"],
     )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
