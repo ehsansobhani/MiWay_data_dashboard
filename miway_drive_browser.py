@@ -359,13 +359,19 @@ def export_csv_streaming(
 # STREAMLIT UI
 # -----------------------------
 
-sa_json_path = st.secrets.get("GDRIVE_SA_JSON_PATH", "")
-if not sa_json_path:
-    st.error("Missing GDRIVE_SA_JSON_PATH in secrets.")
+# sa_json_path = st.secrets.get("GDRIVE_SA_JSON_PATH", "")
+# if not sa_json_path:
+#     st.error("Missing GDRIVE_SA_JSON_PATH in secrets.")
+#     st.stop()
+
+# # with open(sa_json_path, "r", encoding="utf-8") as f:
+#     # sa_json_str = f.read()
+sa_json_str = st.secrets.get("GDRIVE_SA_JSON", "")
+if not sa_json_str:
+    st.error("Missing GDRIVE_SA_JSON in Streamlit secrets.")
     st.stop()
 
-# with open(sa_json_path, "r", encoding="utf-8") as f:
-    # sa_json_str = f.read()
+service = get_drive_service(sa_json_str)
 
 # service = get_drive_service(sa_json_str)
 
