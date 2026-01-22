@@ -33,6 +33,78 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
+# ============================
+# DROP-IN: SECRETS SAFE LOADER (PUT THIS RIGHT AFTER IMPORTS)
+# ============================
+# It prevents StreamlitSecretNotFoundError and gives you a clear setup UI.
+
+import streamlit as st
+
+def _safe_get_secret(key: str, default=None):
+    """
+    Streamlit Cloud throws StreamlitSecretNotFoundError when NO secrets file exists.
+    This wrapper avoids hard-crash and lets us show instructions.
+    """
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+def require_secrets_or_show_instructions() -> tuple[str, dict]:
+    """
+    Returns (root_folder_id, sa_info_dict) if present.
+    Otherwise renders a help page and stops the app.
+    """
+    root_folder_id = _safe_get_secret("GDRIVE_ROOT_FOLDER_ID", "")
+    sa_info = _safe_get_secret("GDRIVE_SA_JSON", None)
+
+    if root_folder_id and isinstance(sa_info, dict):
+        return root_folder_id, sa_info
+
+    st.error("Missing Streamlit secrets on this deployment.")
+    st.markdown(
+        """
+### Fix (Streamlit Community Cloud)
+
+1. Open your deployed app page
+2. Click **Manage app** (bottom-right)
+3. Go to **Settings → Secrets**
+4. Paste the following TOML (edit values), then **Save**
+        """
+    )
+
+    st.code(
+        """GDRIVE_ROOT_FOLDER_ID = "PASTE_YOUR_DRIVE_FOLDER_ID_HERE"
+
+GDRIVE_SA_JSON = {
+  type="service_account",
+  project_id="YOUR_PROJECT_ID",
+  private_key_id="YOUR_PRIVATE_KEY_ID",
+  private_key="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n",
+  client_email="YOUR_SERVICE_ACCOUNT_EMAIL",
+  client_id="YOUR_CLIENT_ID",
+  auth_uri="https://accounts.google.com/o/oauth2/auth",
+  token_uri="https://oauth2.googleapis.com/token",
+  auth_provider_x509_cert_url="https://www.googleapis.com/oauth2/v1/certs",
+  client_x509_cert_url="https://www.googleapis.com/robot/v1/metadata/x509/...",
+  universe_domain="googleapis.com"
+}""",
+        language="toml"
+    )
+
+    st.info(
+        "Also make sure your Google Drive folder is shared with the service account email "
+        "(Viewer access is enough)."
+    )
+    st.stop()
+
+
+# ---- USE THIS IN YOUR APP INSTEAD OF st.secrets.get(...) DIRECTLY ----
+root_folder_id, sa_info = require_secrets_or_show_instructions()
+
+# Now use:
+# service = get_drive_service(sa_info)
+# and continue.
 
 # -----------------------------
 # UI CONFIG
