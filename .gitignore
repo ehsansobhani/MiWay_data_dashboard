@@ -1,0 +1,20 @@
+# --- secrets ---
+.streamlit/secrets.toml
+.streamlit/*.json
+*.json
+
+# --- data outputs (DO NOT COMMIT) ---
+*.csv
+*.parquet
+
+# --- python junk ---
+__pycache__/
+*.pyc
+
+# --- virtual env ---
+.venv/
+venv/
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
