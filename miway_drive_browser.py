@@ -1,23 +1,32 @@
 # ============================
-# COMPLETE DROP-IN DEPLOY VERSION
+# SINGLE COMPLETE DROP-IN (DEPLOY-SAFE) miway_drive_browser.py
 # ============================
-# Paste this ENTIRE file as your app (e.g., app.py) and deploy.
-# It:
-#   - reads Google Drive service account JSON ONLY from Streamlit Secrets (GDRIVE_SA_JSON as TOML dict)
-#   - reads root folder id from Streamlit Secrets (GDRIVE_ROOT_FOLDER_ID)
-#   - browses Drive folders and streams Parquet -> CSV into a temp file
-#   - provides a download button (works on Streamlit Cloud)
+# Paste this whole file as your Streamlit app (e.g., miway_drive_browser.py) and deploy.
+# Secrets (Streamlit Cloud → Manage app → Settings → Secrets) MUST be:
 #
-# REQUIRED Streamlit secrets (Cloud -> App -> Settings -> Secrets):
-#   GDRIVE_ROOT_FOLDER_ID = "..."
-#   GDRIVE_SA_JSON = { type="service_account", project_id="...", private_key_id="...", private_key="..."}
+# GDRIVE_ROOT_FOLDER_ID = "1queRR3FYKhiUz-40mU5sa9EUSNNQIq0F"
 #
-# REQUIRED requirements.txt:
-#   streamlit
-#   pandas
-#   pyarrow
-#   google-auth
-#   google-api-python-client
+# [GDRIVE_SA_JSON]
+# type = "service_account"
+# project_id = "thunder-bay-electrical-bus"
+# private_key_id = "..."
+# private_key = """-----BEGIN PRIVATE KEY-----
+# ...
+# -----END PRIVATE KEY-----"""
+# client_email = "miway-380@thunder-bay-electrical-bus.iam.gserviceaccount.com"
+# client_id = "..."
+# auth_uri = "https://accounts.google.com/o/oauth2/auth"
+# token_uri = "https://oauth2.googleapis.com/token"
+# auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"
+# client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/miway-380%40thunder-bay-electrical-bus.iam.gserviceaccount.com"
+# universe_domain = "googleapis.com"
+#
+# requirements.txt:
+# streamlit
+# pandas
+# pyarrow
+# google-auth
+# google-api-python-client
 
 import io
 from datetime import datetime, date, timedelta, time as dtime
@@ -33,78 +42,6 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
-# ============================
-# DROP-IN: SECRETS SAFE LOADER (PUT THIS RIGHT AFTER IMPORTS)
-# ============================
-# It prevents StreamlitSecretNotFoundError and gives you a clear setup UI.
-
-import streamlit as st
-
-def _safe_get_secret(key: str, default=None):
-    """
-    Streamlit Cloud throws StreamlitSecretNotFoundError when NO secrets file exists.
-    This wrapper avoids hard-crash and lets us show instructions.
-    """
-    try:
-        return st.secrets.get(key, default)
-    except Exception:
-        return default
-
-def require_secrets_or_show_instructions() -> tuple[str, dict]:
-    """
-    Returns (root_folder_id, sa_info_dict) if present.
-    Otherwise renders a help page and stops the app.
-    """
-    root_folder_id = _safe_get_secret("GDRIVE_ROOT_FOLDER_ID", "")
-    sa_info = _safe_get_secret("GDRIVE_SA_JSON", None)
-
-    if root_folder_id and isinstance(sa_info, dict):
-        return root_folder_id, sa_info
-
-    st.error("Missing Streamlit secrets on this deployment.")
-    st.markdown(
-        """
-### Fix (Streamlit Community Cloud)
-
-1. Open your deployed app page
-2. Click **Manage app** (bottom-right)
-3. Go to **Settings → Secrets**
-4. Paste the following TOML (edit values), then **Save**
-        """
-    )
-
-    st.code(
-        """GDRIVE_ROOT_FOLDER_ID = "PASTE_YOUR_DRIVE_FOLDER_ID_HERE"
-
-GDRIVE_SA_JSON = {
-  type="service_account",
-  project_id="YOUR_PROJECT_ID",
-  private_key_id="YOUR_PRIVATE_KEY_ID",
-  private_key="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n",
-  client_email="YOUR_SERVICE_ACCOUNT_EMAIL",
-  client_id="YOUR_CLIENT_ID",
-  auth_uri="https://accounts.google.com/o/oauth2/auth",
-  token_uri="https://oauth2.googleapis.com/token",
-  auth_provider_x509_cert_url="https://www.googleapis.com/oauth2/v1/certs",
-  client_x509_cert_url="https://www.googleapis.com/robot/v1/metadata/x509/...",
-  universe_domain="googleapis.com"
-}""",
-        language="toml"
-    )
-
-    st.info(
-        "Also make sure your Google Drive folder is shared with the service account email "
-        "(Viewer access is enough)."
-    )
-    st.stop()
-
-
-# ---- USE THIS IN YOUR APP INSTEAD OF st.secrets.get(...) DIRECTLY ----
-root_folder_id, sa_info = require_secrets_or_show_instructions()
-
-# Now use:
-# service = get_drive_service(sa_info)
-# and continue.
 
 # -----------------------------
 # UI CONFIG
@@ -132,15 +69,54 @@ AGENCY_SLUG_DEFAULT = "miway"
 
 
 # -----------------------------
+# SECRETS (DEPLOY SAFE)
+# -----------------------------
+def _secret(key: str, default=None):
+    # Streamlit Cloud raises when secrets file is missing/invalid; avoid hard crash.
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+root_folder_id = _secret("GDRIVE_ROOT_FOLDER_ID", "")
+sa_info = _secret("GDRIVE_SA_JSON", None)
+
+if not root_folder_id or not isinstance(sa_info, dict):
+    st.error("Missing Streamlit secrets on this deployment (or secrets TOML is invalid).")
+    st.markdown(
+        """
+**Fix (Streamlit Community Cloud):**
+1. Open your deployed app
+2. Click **Manage app** (bottom-right)
+3. Go to **Settings → Secrets**
+4. Paste valid TOML for:
+   - `GDRIVE_ROOT_FOLDER_ID`
+   - `[GDRIVE_SA_JSON]` (table) with triple-quoted `private_key`
+5. **Save** then **Reboot app**
+        """
+    )
+    try:
+        st.write("Detected secret keys:", list(st.secrets.keys()))
+    except Exception:
+        st.write("Detected secret keys: (none)")
+    st.stop()
+
+
+# -----------------------------
 # AUTH + DRIVE HELPERS
 # -----------------------------
 @st.cache_resource(show_spinner=False)
-def get_drive_service(sa_info: dict):
+def get_drive_service(sa_info_dict: dict):
     creds = service_account.Credentials.from_service_account_info(
-        sa_info,
+        sa_info_dict,
         scopes=["https://www.googleapis.com/auth/drive.readonly"],
     )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+service = get_drive_service(sa_info)
+agency_slug = AGENCY_SLUG_DEFAULT
 
 
 def drive_list_children(service, parent_id: str, only_folders: Optional[bool] = None) -> List[Dict]:
@@ -207,11 +183,9 @@ def resolve_folder_path(_service, root_id: str, agency_slug: str, feed: str) -> 
     agency_id = drive_find_child_folder_id(_service, root_id, agency_slug)
     if not agency_id:
         return None
-
     raw_id = drive_find_child_folder_id(_service, agency_id, "raw")
     if not raw_id:
         return None
-
     feed_id = drive_find_child_folder_id(_service, raw_id, feed)
     return feed_id
 
@@ -232,7 +206,7 @@ def date_folder_name(d: date) -> str:
 
 
 # -----------------------------
-# LOAD / LIST PARQUETS
+# LIST PARQUET PARTS
 # -----------------------------
 def list_candidate_parquet_files(
     service,
@@ -244,7 +218,7 @@ def list_candidate_parquet_files(
 ) -> List[Tuple[str, str, str]]:
     """
     Returns list of (file_id, file_name, logical_partition)
-    logical_partition is like "date=YYYY-MM-DD/hour=HH"
+    logical_partition like "date=YYYY-MM-DD/hour=HH"
     """
     files_out: List[Tuple[str, str, str]] = []
 
@@ -283,6 +257,9 @@ def list_candidate_parquet_files(
     return files_out
 
 
+# -----------------------------
+# EXPORT CSV (SERVER TEMP FILE) + DOWNLOAD
+# -----------------------------
 def export_csv_streaming(
     service,
     file_tuples: List[Tuple[str, str, str]],
@@ -291,10 +268,6 @@ def export_csv_streaming(
     output_path: str,
     keep_cols=None,
 ) -> str:
-    """
-    Downloads each parquet file from Drive, reads it, and appends rows to one CSV file on disk.
-    Returns the path to the created CSV file.
-    """
     if not file_tuples:
         raise RuntimeError("No parquet files found for selected date range.")
 
@@ -318,7 +291,6 @@ def export_csv_streaming(
             progress_bar.progress(min(0.999, base + (p / n)))
 
         b = drive_download_bytes(service, fid, progress_cb=_chunk_progress)
-
         table = pq.read_table(io.BytesIO(b), columns=keep_cols if keep_cols else None)
         df = table.to_pandas()
 
@@ -339,21 +311,8 @@ def export_csv_streaming(
 
 
 # -----------------------------
-# STREAMLIT UI + DEPLOY SAFE SECRETS
+# MAIN UI
 # -----------------------------
-root_folder_id = st.secrets.get("GDRIVE_ROOT_FOLDER_ID", "")
-if not root_folder_id:
-    st.error("Missing GDRIVE_ROOT_FOLDER_ID in Streamlit secrets.")
-    st.stop()
-
-sa_info = st.secrets.get("GDRIVE_SA_JSON", None)
-if not isinstance(sa_info, dict):
-    st.error("Missing/invalid GDRIVE_SA_JSON (must be a TOML dict) in Streamlit secrets.")
-    st.stop()
-
-service = get_drive_service(sa_info)
-agency_slug = AGENCY_SLUG_DEFAULT
-
 colA, colB, colC = st.columns([1, 1, 2])
 
 with colA:
@@ -374,23 +333,26 @@ with colC:
         t1 = None
 
 st.caption(
-    "Note: Your folders are partitioned by **UTC time** (`date=.../hour=...`). "
-    "If you want local time filtering, convert after loading."
+    "Folders are partitioned by **UTC** (`date=.../hour=...`). "
+    "Export uses Drive partitions; convert to local time later if needed."
 )
 
 feed_root_id = resolve_folder_path(service, root_folder_id, agency_slug, feed)
 if not feed_root_id:
-    st.error(f"Could not find folder path: ROOT/{agency_slug}/raw/{feed} on Drive. Check folder names.")
+    st.error(
+        f"Could not find folder path ROOT/{agency_slug}/raw/{feed}. "
+        "Check folder names and that the Drive folder is shared with the service account."
+    )
     st.stop()
 
 with st.expander("Advanced controls", expanded=True):
-    preview_rows = st.slider("Preview rows", 10, 500, 50, step=10)
+    preview_rows = st.slider("Preview rows (after export)", 10, 500, 50, step=10)
 
 if "busy" not in st.session_state:
     st.session_state.busy = False
 
-btn1, _ = st.columns([1, 4])
-with btn1:
+btn_col1, _ = st.columns([1, 4])
+with btn_col1:
     export_clicked = st.button("Export CSV (build + download)", disabled=st.session_state.busy)
 
 status_box = st.empty()
@@ -436,6 +398,13 @@ if export_clicked:
 csv_path = st.session_state.get("csv_path", None)
 if csv_path and Path(csv_path).exists():
     st.success("CSV is ready.")
+    # Optional tiny preview (read first few lines to avoid loading huge file)
+    try:
+        preview_df = pd.read_csv(csv_path, nrows=preview_rows)
+        st.dataframe(preview_df, use_container_width=True)
+    except Exception:
+        pass
+
     with open(csv_path, "rb") as f:
         st.download_button(
             label="Download CSV",
@@ -443,5 +412,5 @@ if csv_path and Path(csv_path).exists():
             file_name=Path(csv_path).name,
             mime="text/csv",
         )
-
-st.info("Tip: On Streamlit Cloud, the CSV is built on the server and then downloaded via the button above.")
+else:
+    st.info("Click **Export CSV (build + download)** to generate a CSV.")
